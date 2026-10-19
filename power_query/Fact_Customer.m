@@ -1,0 +1,25 @@
+let
+    Source = Base_Customer_Cleaned,
+    #"Merged Queries" = Table.NestedJoin(Source, {"Gender"}, #"Dim Gender", {"Gender"}, "Dim Gender", JoinKind.LeftOuter),
+    #"Expanded Dim Gender" = Table.ExpandTableColumn(#"Merged Queries", "Dim Gender", {"Index"}, {"Dim Gender.Index"}),
+    #"Reordered Columns" = Table.ReorderColumns(#"Expanded Dim Gender",{"Customer_ID", "Customer_Name", "DOB", "Dim Gender.Index", "Gender", "City", "State", "Zip_Code", "Join_Date", "Phone", "Acquisition_Channel", "Annual_Income"}),
+    #"Removed Columns" = Table.RemoveColumns(#"Reordered Columns",{"Gender"}),
+    #"Renamed Columns" = Table.RenameColumns(#"Removed Columns",{{"Dim Gender.Index", "Gender ID"}}),
+    #"Merged Queries1" = Table.NestedJoin(#"Renamed Columns", {"Acquisition_Channel"}, #"Dim Acc_Channel", {"Acquisition_Channel"}, "Dim Acc_Channel", JoinKind.LeftOuter),
+    #"Expanded Dim Acc_Channel" = Table.ExpandTableColumn(#"Merged Queries1", "Dim Acc_Channel", {"Index"}, {"Dim Acc_Channel.Index"}),
+    #"Reordered Columns1" = Table.ReorderColumns(#"Expanded Dim Acc_Channel",{"Customer_ID", "Customer_Name", "DOB", "Gender ID", "City", "State", "Zip_Code", "Join_Date", "Phone", "Dim Acc_Channel.Index", "Acquisition_Channel", "Annual_Income"}),
+    #"Renamed Columns1" = Table.RenameColumns(#"Reordered Columns1",{{"Dim Acc_Channel.Index", "Acquisition_Channel ID"}}),
+    #"Removed Columns1" = Table.RemoveColumns(#"Renamed Columns1",{"Acquisition_Channel"}),
+    #"Merged Queries2" = Table.NestedJoin(#"Removed Columns1", {"City"}, #"Dim City", {"City"}, "Dim City", JoinKind.LeftOuter),
+    #"Expanded Dim City" = Table.ExpandTableColumn(#"Merged Queries2", "Dim City", {"Index"}, {"Dim City.Index"}),
+    #"Reordered Columns2" = Table.ReorderColumns(#"Expanded Dim City",{"Customer_ID", "Customer_Name", "DOB", "Gender ID", "Dim City.Index", "City", "State", "Zip_Code", "Join_Date", "Phone", "Acquisition_Channel ID", "Annual_Income"}),
+    #"Renamed Columns2" = Table.RenameColumns(#"Reordered Columns2",{{"Dim City.Index", "City ID"}}),
+    #"Removed Columns2" = Table.RemoveColumns(#"Renamed Columns2",{"City"}),
+    #"Trimmed Text" = Table.TransformColumns(#"Removed Columns2",{{"Customer_Name", Text.Trim, type text}}),
+    #"Merged Queries3" = Table.NestedJoin(#"Trimmed Text", {"State"}, #"Dim State", {"State ID"}, "Dim State", JoinKind.LeftOuter),
+    #"Reordered Columns3" = Table.ReorderColumns(#"Merged Queries3",{"Customer_ID", "Customer_Name", "DOB", "Gender ID", "City ID", "State", "Dim State", "Zip_Code", "Join_Date", "Phone", "Acquisition_Channel ID", "Annual_Income"}),
+    #"Expanded Dim State" = Table.ExpandTableColumn(#"Reordered Columns3", "Dim State", {"Index"}, {"Dim State.Index"}),
+    #"Renamed Columns3" = Table.RenameColumns(#"Expanded Dim State",{{"Dim State.Index", "State ID"}}),
+    #"Removed Columns3" = Table.RemoveColumns(#"Renamed Columns3",{"State"})
+in
+    #"Removed Columns3"

@@ -1,0 +1,260 @@
+// Unique customers in the current join-date and segment context. Not active customers or retention.
+[Total Customers] =
+DISTINCTCOUNTNOBLANK('Fact Customer'[Customer_ID])
+
+// Rows before deduplication; used to expose exact duplicates.
+[Source Rows] =
+COUNTROWS('Fact Customer')
+
+// Excess rows relative to unique nonblank IDs. Confirmed exact duplicates in this supplied file.
+[Duplicate Extra Rows] =
+[Source Rows] - [Total Customers]
+
+// Extra rows as a fraction of all source rows.
+[Duplicate Row %] =
+DIVIDE([Duplicate Extra Rows], [Source Rows])
+
+// Sum of one income per customer, safe for the verified exact duplicates. Personal annual income; not company revenue.
+[Total Annual Income] =
+SUMX(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Annual_Income]))
+        )
+
+// One income per customer; blanks excluded from the average. MAX is safe only while duplicate IDs have identical attributes.
+[Avg Income per Customer] =
+AVERAGEX(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Annual_Income]))
+        )
+
+// Customer-weighted income distribution; exact duplicates do not receive extra weight.
+[Median Customer Income] =
+MEDIANX(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Annual_Income]))
+        )
+
+// Customer-weighted income distribution; exact duplicates do not receive extra weight.
+[Income P25] =
+PERCENTILEX.INC(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Annual_Income])), 0.25
+        )
+
+// Customer-weighted income distribution; exact duplicates do not receive extra weight.
+[Income P75] =
+PERCENTILEX.INC(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Annual_Income])), 0.75
+        )
+
+// Spread of the middle 50% of customer incomes.
+[Income IQR] =
+[Income P75] - [Income P25]
+
+// Replaces old current-age formula with completed years at joining. Display label: Average age at join.
+[Avg Customer Age] =
+AVERAGEX(
+            FILTER(VALUES('Fact Customer'[Customer_ID]), NOT ISBLANK('Fact Customer'[Customer_ID])),
+            CALCULATE(MAX('Fact Customer'[Age at Join]))
+        )
+
+// Customers younger than 18 at join. Investigate suitability/data semantics; not automatically an error.
+[Under 18 Customers] =
+CALCULATE([Total Customers], KEEPFILTERS('Fact Customer'[Age at Join] < 18), KEEPFILTERS('Fact Customer'[Age at Join] >= 0))
+
+// Share younger than 18 at joining.
+[Under 18 %] =
+DIVIDE([Under 18 Customers], [Total Customers])
+
+// Explicit analytical threshold: annual income >= 200,000 in source units. Not a revenue or lifetime-value classification.
+[High Income Customers] =
+CALCULATE([Total Customers], KEEPFILTERS('Fact Customer'[Annual_Income] >= 200000))
+
+// Share of unique customers with income >= 200,000.
+[High Income %] =
+DIVIDE([High Income Customers], [Total Customers])
+
+// Unknown acquisition channel within current filters.
+[Unknown Channel Customers] =
+CALCULATE([Total Customers], KEEPFILTERS('Dim Acc_Channel'[Acquisition_Channel] = "Unknown"))
+
+// Unknown channel share within current filters; on the Unknown row itself this is 100%.
+[Unknown Channel %] =
+DIVIDE([Unknown Channel Customers], [Total Customers])
+
+// Earliest observed join date across the dataset; does not prove source coverage.
+[Data Start Date] =
+CALCULATE(MIN('Fact Customer'[Join_Date]), REMOVEFILTERS())
+
+// Latest observed join date across the dataset. Provisional coverage cutoff, not a confirmed extraction timestamp.
+[Data Through Date] =
+CALCULATE(MAX('Fact Customer'[Join_Date]), REMOVEFILTERS())
+
+// Latest selected calendar date clipped to observed data coverage; blank for selections entirely outside coverage.
+[Analysis End Date] =
+VAR __SelectedFirstDate = MIN('Dim Date'[Date])
+        VAR __ClippedLastDate = MIN(MAX('Dim Date'[Date]), [Data Through Date])
+        RETURN IF(__SelectedFirstDate <= __ClippedLastDate && __ClippedLastDate >= [Data Start Date], __ClippedLastDate)
+
+// Acquisitions from the start of the endpoint month/year through the clipped endpoint; intentionally replaces date selection.
+[Customers MTD] =
+VAR EndDate = [Analysis End Date]
+        VAR StartDate = DATE(YEAR(EndDate), MONTH(EndDate), 1)
+        RETURN IF(NOT ISBLANK(EndDate),
+            CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'),
+                DATESBETWEEN('Dim Date'[Date], StartDate, EndDate)))
+
+// Acquisitions from the start of the endpoint month/year through the clipped endpoint; intentionally replaces date selection.
+[Customers YTD] =
+VAR EndDate = [Analysis End Date]
+        VAR StartDate = DATE(YEAR(EndDate), 1, 1)
+        RETURN IF(NOT ISBLANK(EndDate),
+            CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'),
+                DATESBETWEEN('Dim Date'[Date], StartDate, EndDate)))
+
+// Same selected observed dates shifted back 12 months. Blank unless the whole comparison is covered; leap day maps to Feb 28.
+[Customers PY] =
+VAR StartDate = [Data Start Date]
+        VAR EndDate = [Data Through Date]
+        VAR CurrentDates = FILTER(VALUES('Dim Date'[Date]), 'Dim Date'[Date] >= StartDate && 'Dim Date'[Date] <= EndDate)
+        VAR PriorDates = SELECTCOLUMNS(CurrentDates, "PriorDate", EDATE('Dim Date'[Date], -12))
+        RETURN IF(COUNTROWS(CurrentDates) > 0 && MINX(PriorDates, [PriorDate]) >= StartDate,
+            COALESCE(CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'), TREATAS(PriorDates, 'Dim Date'[Date])), 0))
+
+// Absolute year-over-year change for comparable selected dates. Blank when prior coverage is unavailable.
+[YoY Customer Change] =
+IF(NOT ISBLANK([Customers PY]), COALESCE([Total Customers], 0) - [Customers PY])
+
+// Comparable-date acquisition growth. Blank for unavailable or zero prior counts.
+[YoY Growth %] =
+DIVIDE([YoY Customer Change], [Customers PY])
+
+// Only evaluates for exactly one complete calendar month with a fully covered previous month. Partial months and total rows are blank.
+[Customers Previous Full Month] =
+VAR EndDate = MAX('Dim Date'[Date])
+        VAR StartDate = DATE(YEAR(EndDate), MONTH(EndDate), 1)
+        VAR PriorStart = EDATE(StartDate, -1)
+        VAR PriorEnd = StartDate - 1
+        VAR ValidMonth = HASONEVALUE('Dim Date'[YearMonthSort])
+            && MIN('Dim Date'[Date]) = StartDate
+            && EndDate = EOMONTH(EndDate, 0)
+            && COUNTROWS(VALUES('Dim Date'[Date])) = DAY(EndDate)
+            && EndDate <= [Data Through Date]
+            && PriorStart >= [Data Start Date]
+        RETURN IF(ValidMonth, COALESCE(CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'),
+            DATESBETWEEN('Dim Date'[Date], PriorStart, PriorEnd)), 0))
+
+// Full-month growth only. Deliberately blank for November 2025 in the supplied file.
+[MoM Growth %] =
+IF(NOT ISBLANK([Customers Previous Full Month]), DIVIDE(COALESCE([Total Customers], 0) - [Customers Previous Full Month], [Customers Previous Full Month]))
+
+// Latest closed calendar month at/before the analysis endpoint, using observed data cutoff.
+[Latest Complete Month End] =
+VAR EndDate = [Analysis End Date]
+        RETURN IF(NOT ISBLANK(EndDate),
+            IF(EndDate = EOMONTH(EndDate, 0), EndDate, EOMONTH(EndDate, -1)))
+
+// Endpoint-based latest complete month. Can reach outside a date slicer; label the month using Latest Complete Month End.
+[Customers Latest Complete Month] =
+VAR EndDate = [Latest Complete Month End]
+        VAR StartDate = EOMONTH(EndDate, -1) + 1
+        RETURN IF(NOT ISBLANK(EndDate) && StartDate >= [Data Start Date],
+            COALESCE(CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'), DATESBETWEEN('Dim Date'[Date], StartDate, EndDate)), 0))
+
+// Average monthly acquisitions across the latest three complete months; each customer has one Join_Date in this file.
+[Customers 3M Monthly Average] =
+VAR EndDate = [Latest Complete Month End]
+        VAR StartDate = EOMONTH(EndDate, -3) + 1
+        RETURN IF(NOT ISBLANK(EndDate) && StartDate >= [Data Start Date],
+            DIVIDE(COALESCE(CALCULATE([Total Customers], REMOVEFILTERS('Dim Date'), DATESBETWEEN('Dim Date'[Date], StartDate, EndDate)), 0), 3))
+
+// City share among selected peers on the visual. Respects slicers. Use on main visuals, not drillthrough tooltip peer comparisons.
+[% of Total by City] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], ALLSELECTED('Dim City')))
+
+// 100 = income average across all city peers, keeping other dimensions/date filters. Explicitly ignores the city slicer.
+[Income Index by City] =
+100 * DIVIDE([Avg Income per Customer], CALCULATE([Avg Income per Customer], REMOVEFILTERS('Dim City')))
+
+// Gender share among selected peers on the visual. Respects slicers. Use on main visuals, not drillthrough tooltip peer comparisons.
+[% of Total by Gender] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], ALLSELECTED('Dim Gender')))
+
+// 100 = income average across all gender peers, keeping other dimensions/date filters. Explicitly ignores the gender slicer.
+[Income Index by Gender] =
+100 * DIVIDE([Avg Income per Customer], CALCULATE([Avg Income per Customer], REMOVEFILTERS('Dim Gender')))
+
+// Channel share among selected peers on the visual. Respects slicers. Use on main visuals, not drillthrough tooltip peer comparisons.
+[% of Total by Channel] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], ALLSELECTED('Dim Acc_Channel')))
+
+// 100 = income average across all channel peers, keeping other dimensions/date filters. Explicitly ignores the channel slicer.
+[Income Index by Channel] =
+100 * DIVIDE([Avg Income per Customer], CALCULATE([Avg Income per Customer], REMOVEFILTERS('Dim Acc_Channel')))
+
+// Dense customer-count ranking within selected cities. Total row blank.
+[Rank City by Customers] =
+IF(ISINSCOPE('Dim City'[City]), RANKX(ALLSELECTED('Dim City'), [Total Customers], , DESC, DENSE))
+
+// Dense ranking within selected acquisition channels. Total row blank.
+[Rank Channel by Customers] =
+IF(ISINSCOPE('Dim Acc_Channel'[Acquisition_Channel]), RANKX(ALLSELECTED('Dim Acc_Channel'), [Total Customers], , DESC, DENSE))
+
+// City change divided by prior-year selected-city total, in percentage points. Contributions sum to overall selected-city growth.
+[City YoY Contribution pp] =
+DIVIDE([YoY Customer Change], CALCULATE([Customers PY], ALLSELECTED('Dim City'))) * 100
+
+// Channel contribution to selected-channel year-over-year growth in percentage points.
+[Channel YoY Contribution pp] =
+DIVIDE([YoY Customer Change], CALCULATE([Customers PY], ALLSELECTED('Dim Acc_Channel'))) * 100
+
+// Comparable prior-year acquisition share among selected channels.
+[Channel Share PY] =
+DIVIDE([Customers PY], CALCULATE([Customers PY], ALLSELECTED('Dim Acc_Channel')))
+
+// Current channel share minus comparable prior-year share, in percentage points.
+[Channel Mix Shift pp] =
+IF(NOT ISBLANK([Channel Share PY]), ([% of Total by Channel] - [Channel Share PY]) * 100)
+
+// Descriptive gap versus all genders at the same other filters; not a causal or adjusted pay-equity estimate.
+[Gender Income Gap %] =
+VAR Ratio = DIVIDE([Avg Income per Customer], CALCULATE([Avg Income per Customer], REMOVEFILTERS('Dim Gender'))) RETURN IF(NOT ISBLANK(Ratio), Ratio - 1)
+
+// City-channel cell share divided by all-city channel share. 100 = expected mix; >100 = overrepresented. Ignores city/channel slicers in peer denominators; retains date/gender/state.
+[Channel Affinity Index] =
+VAR CellN = [Total Customers]
+        VAR RowN = CALCULATE([Total Customers], REMOVEFILTERS('Dim Acc_Channel'))
+        VAR ColN = CALCULATE([Total Customers], REMOVEFILTERS('Dim City'))
+        VAR AllN = CALCULATE([Total Customers], REMOVEFILTERS('Dim City'), REMOVEFILTERS('Dim Acc_Channel'))
+        RETURN IF(ISINSCOPE('Dim City'[City]) && ISINSCOPE('Dim Acc_Channel'[Acquisition_Channel]),
+            100 * DIVIDE(DIVIDE(CellN, RowN), DIVIDE(ColN, AllN)))
+
+// Tooltip-safe share across all cities, keeping other segment/date filters. Ignores city selection.
+[City Share All Peers] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], REMOVEFILTERS('Dim City')))
+
+// Tooltip-safe share across all channels, keeping other segment/date filters. Ignores channel selection.
+[Channel Share All Peers] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], REMOVEFILTERS('Dim Acc_Channel')))
+
+// Tooltip-safe share across all genders, keeping other segment/date filters. Ignores gender selection.
+[Gender Share All Peers] =
+DIVIDE([Total Customers], CALCULATE([Total Customers], REMOVEFILTERS('Dim Gender')))
+
+// Dynamic label that exposes the actual hover/drill filter context.
+[Segment Context Label] =
+COALESCE(SELECTEDVALUE('Dim City'[City]), "All / multiple cities")
+            & " | " & COALESCE(SELECTEDVALUE('Dim Gender'[Gender]), "All / multiple genders")
+            & " | " & COALESCE(SELECTEDVALUE('Dim Acc_Channel'[Acquisition_Channel]), "All / multiple channels")
+
+// Visible data cutoff / partial-period note. Coverage is inferred from Join_Date and must be confirmed with source owner.
+[Period Coverage Note] =
+VAR __ClippedLastDate = [Data Through Date]
+        VAR EndDate = [Analysis End Date]
+        RETURN IF(ISBLANK(EndDate), "No observed data in selected period",
+            "Observed data through " & FORMAT(__ClippedLastDate, "dd MMM yyyy")
+            & IF(MAX('Dim Date'[Date]) > __ClippedLastDate, " | selection extends beyond data", "")
+            & IF(EndDate < EOMONTH(EndDate, 0), " | endpoint month is partial", ""))
+
