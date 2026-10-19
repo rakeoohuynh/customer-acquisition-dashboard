@@ -10,12 +10,12 @@ Customer acquisition fell in 2025. Where is the decline coming from, and what sh
 
 ## Key findings (Jan–Oct 2025 vs Jan–Oct 2024)
 
-- New customers fell **1.3%** (20,896 → 20,623).
-- **In-Store** was the biggest driver: −245 customers (**−6.9%**). Email Marketing was the only channel with clear growth (+2.5%).
-- **Philadelphia (−4.9%)** and **Phoenix (−4.2%)** declined the most; Chicago grew (+2.3%).
+- New customers fell **0.9%** (20,808 → 20,623).
+- **In-Store** was the biggest driver: −229 customers (**−6.5%**), about −1.1 percentage points of total growth. Email Marketing grew the most (+2.9%).
+- **Philadelphia (−4.4%)** and **Phoenix (−3.9%)** declined the most; Chicago grew (+2.7%).
 - **16.9%** of customers have an *Unknown* acquisition channel, which limits how precisely growth can be attributed.
 
-November 2025 is excluded from the comparison because the data ends on 1 Nov 2025.
+November 2025 is excluded because the data ends on 1 Nov 2025, and 29 Feb 2024 has no matching date in 2025.
 
 ## Recommendation
 
@@ -36,6 +36,8 @@ A custom tooltip page shows segment details (customers, YoY growth, median incom
 | --- | --- |
 | ![City page](screenshots/city.png) | ![Channel page](screenshots/channel.png) |
 
+![Gender page](screenshots/gender.png)
+
 ## Data model
 
 Star schema with one fact table and five dimensions:
@@ -55,4 +57,4 @@ Power BI Desktop · Power Query (M) · DAX
 
 ## Data
 
-CyberSoft Academy course dataset. 
+CyberSoft Academy course dataset.
